@@ -1,0 +1,719 @@
+// =============================================================================
+// GigOS — Prisma Schema (MVP v1)
+// Database: Supabase (PostgreSQL)
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// =============================================================================
+// ENUMS
+// =============================================================================
+
+enum VerificationLevel {
+  unverified
+  identity
+  employment
+  full
+}
+
+enum UserRole {
+  worker
+  employer
+  admin
+  resolution_staff
+}
+
+enum ReputationTier {
+  new
+  verified
+  trusted
+  preferred
+  elite
+  suspended
+}
+
+enum GigStatus {
+  draft
+  open
+  filled
+  in_progress
+  completed
+  cancelled
+}
+
+enum ApplicationStatus {
+  pending
+  offered
+  accepted
+  declined
+  withdrawn
+}
+
+enum AgreementStatus {
+  pending
+  confirmed
+  in_progress
+  completed
+  disputed
+  cancelled
+}
+
+enum PaymentStatus {
+  pending
+  released
+  disputed
+  cancelled
+}
+
+enum PaymentMethod {
+  cash
+  venmo
+  zelle
+  paypal
+  in_app
+}
+
+enum DisputeStatus {
+  open
+  evidence_collected
+  under_review
+  decided
+  appealed
+}
+
+enum AppealStatus {
+  none
+  filed
+  upheld
+  overturned
+}
+
+enum ReviewType {
+  employer_to_worker
+  worker_to_employer
+  coworker
+}
+
+enum SkillProficiency {
+  beginner
+  intermediate
+  expert
+}
+
+enum EndorsementSource {
+  self_reported
+  employer_endorsed
+  platform_verified
+}
+
+enum EvidenceType {
+  message
+  photo
+  document
+  check_in_out
+  payment_record
+  other
+}
+
+// =============================================================================
+// USERS
+// =============================================================================
+
+model User {
+  id                  String            @id @default(uuid())
+  email               String            @unique
+  phone               String            @unique
+  passwordHash        String            @map("password_hash")
+  displayName         String            @map("display_name")
+  avatarUrl           String?           @map("avatar_url")
+  role                UserRole          @default(worker)
+  createdAt           DateTime          @default(now()) @map("created_at")
+  updatedAt           DateTime          @updatedAt @map("updated_at")
+  deletedAt           DateTime?         @map("deleted_at")
+
+  // Verification
+  verificationLevel   VerificationLevel @default(unverified) @map("verification_level")
+  identityVerified    Boolean           @default(false) @map("identity_verified")
+  employmentVerified   Boolean           @default(false) @map("employment_verified")
+
+  // Reputation
+  reputationTier      ReputationTier    @default(new) @map("reputation_tier")
+  reliabilityScore    Decimal           @default(0.00) @map("reliability_score") @db.Decimal(5, 2)
+
+  // Risk (AI-computed)
+  riskFlags           Json              @default("[]") @map("risk_flags")
+  riskSummary         String?           @map("risk_summary")
+
+  lastActiveAt        DateTime?         @map("last_active_at")
+
+  // Relations
+  workerProfile       WorkerProfile?
+  employerProfile     EmployerProfile?
+  skillAssertions     SkillAssertion[]
+  serviceAreas        ServiceArea[]
+  availabilityBlocks  AvailabilityBlock[]
+  equipment           Equipment[]
+  portfolioItems      PortfolioItem[]
+  teamRelationships    TeamRelationship[] @relation("UserTeamRelationships")
+  coworkerRelationships TeamRelationship[] @relation("CoworkerRelationships")
+  gigs                Gig[]             @relation("EmployerGigs")
+  applications        Application[]
+  agreementsAsWorker  Agreement[]       @relation("WorkerAgreements")
+  agreementsAsEmployer Agreement[]      @relation("EmployerAgreements")
+  reviewsGiven        Review[]          @relation("ReviewsGiven")
+  reviewsReceived     Review[]          @relation("ReviewsReceived")
+  disputesFiled       Dispute[]         @relation("DisputeFiler")
+  disputeEvidence     DisputeEvidence[]
+  paymentMethods      UserPaymentMethod[]
+  adminActions        AdminAction[]     @relation("AdminActions")
+
+  @@map("users")
+  @@index([role])
+  @@index([reputationTier])
+  @@index([email])
+  @@index([phone])
+}
+
+// =============================================================================
+// WORKER PROFILES
+// =============================================================================
+
+model WorkerProfile {
+  userId        String   @id @map("user_id")
+  bio           String?
+  headline      String?
+
+  // Transport
+  hasCar        Boolean  @default(false) @map("has_car")
+  hasBike       Boolean  @default(false) @map("has_bike")
+  hasTransitPass Boolean @default(false) @map("has_transit_pass")
+  canRelocate   Boolean  @default(false) @map("can_relocate")
+
+  // Work preferences
+  minHourlyRate Decimal? @map("min_hourly_rate") @db.Decimal(7, 2)
+  preferredPaymentMethod PaymentMethod @default(cash) @map("preferred_payment_method")
+
+  // Location
+  homeLat       Decimal? @map("home_lat") @db.Decimal(10, 7)
+  homeLng       Decimal? @map("home_lng") @db.Decimal(10, 7)
+  homeNeighborhood String? @map("home_neighborhood")
+
+  // Availability
+  availabilityNotes String? @map("availability_notes")
+
+  // Stats (denormalized)
+  totalGigsCompleted Int     @default(0) @map("total_gigs_completed")
+  totalGigsCancelled Int     @default(0) @map("total_gigs_cancelled")
+  avgRating          Decimal  @default(0.00) @map("avg_rating") @db.Decimal(3, 2)
+  totalReviews       Int      @default(0) @map("total_reviews")
+
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("worker_profiles")
+}
+
+// =============================================================================
+// EMPLOYER PROFILES
+// =============================================================================
+
+model EmployerProfile {
+  userId        String   @id @map("user_id")
+  businessName  String?
+  bio           String?
+
+  // Business info
+  businessType  String? @map("business_type")
+  websiteUrl    String? @map("website_url")
+  addressStreet String? @map("address_street")
+  addressLat    Decimal? @map("address_lat") @db.Decimal(10, 7)
+  addressLng    Decimal? @map("address_lng") @db.Decimal(10, 7)
+
+  // Verification docs
+  verificationDocs Json   @default("[]") @map("verification_docs")
+
+  // Stats (denormalized)
+  totalGigsPosted  Int     @default(0) @map("total_gigs_posted")
+  totalHires       Int     @default(0) @map("total_hires")
+  avgRating        Decimal @default(0.00) @map("avg_rating") @db.Decimal(3, 2)
+  totalReviews     Int     @default(0) @map("total_reviews")
+
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("employer_profiles")
+}
+
+// =============================================================================
+// SKILL TAXONOMY
+// =============================================================================
+
+model SkillTaxonomy {
+  id          String   @id @default(uuid())
+  slug        String   @unique
+  name        String
+  category    String
+  description String?
+  isActive    Boolean  @default(true) @map("is_active")
+
+  skillAssertions SkillAssertion[]
+  gigs          Gig[]
+  portfolioItems PortfolioItem[]
+  reviews       Review[]
+
+  @@map("skill_taxonomy")
+  @@index([category])
+  @@index([slug])
+}
+
+// =============================================================================
+// SKILL ASSERTIONS
+// =============================================================================
+
+model SkillAssertion {
+  id          String           @id @default(uuid())
+  userId      String           @map("user_id")
+  skillId     String           @map("skill_id")
+  proficiency SkillProficiency @default(beginner)
+  source      EndorsementSource @default(self_reported)
+  verifiedAt  DateTime?        @map("verified_at")
+  createdAt   DateTime         @default(now()) @map("created_at")
+
+  user  User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  skill SkillTaxonomy @relation(fields: [skillId], references: [id])
+
+  @@unique([userId, skillId])
+  @@map("skill_assertions")
+  @@index([userId])
+  @@index([skillId])
+}
+
+// =============================================================================
+// SERVICE AREAS
+// =============================================================================
+
+model ServiceArea {
+  id          String   @id @default(uuid())
+  userId      String   @map("user_id")
+  name        String
+  lat         Decimal? @db.Decimal(10, 7)
+  lng         Decimal? @db.Decimal(10, 7)
+  radiusMiles Decimal  @default(10.00) @map("radius_miles") @db.Decimal(5, 2)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, name])
+  @@map("service_areas")
+  @@index([userId])
+}
+
+// =============================================================================
+// AVAILABILITY BLOCKS
+// =============================================================================
+
+model AvailabilityBlock {
+  id           String   @id @default(uuid())
+  userId       String   @map("user_id")
+  dayOfWeek    Int      @map("day_of_week") // 0=Sunday
+  startTime    String   @map("start_time") // TIME stored as string "HH:MM"
+  endTime      String   @map("end_time")
+  isAvailable  Boolean  @default(true) @map("is_available")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("availability_blocks")
+  @@index([userId])
+  @@index([userId, dayOfWeek])
+}
+
+// =============================================================================
+// EQUIPMENT
+// =============================================================================
+
+model Equipment {
+  id          String   @id @default(uuid())
+  userId      String   @map("user_id")
+  name        String
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("equipment")
+  @@index([userId])
+}
+
+// =============================================================================
+// PORTFOLIO ITEMS
+// =============================================================================
+
+model PortfolioItem {
+  id          String   @id @default(uuid())
+  userId      String   @map("user_id")
+  skillId     String?  @map("skill_id")
+  photoUrl    String   @map("photo_url")
+  caption     String?
+  gigId       String?  @map("gig_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  user  User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  skill SkillTaxonomy? @relation(fields: [skillId], references: [id])
+
+  @@map("portfolio_items")
+  @@index([userId])
+  @@index([skillId])
+}
+
+// =============================================================================
+// TEAM RELATIONSHIPS
+// =============================================================================
+
+model TeamRelationship {
+  id                      String    @id @default(uuid())
+  userId                  String    @map("user_id")
+  coworkerId              String    @map("coworker_id")
+  gigId                   String?   @map("gig_id")
+  yourRatingOfCoworker    Int?      @map("your_rating_of_coworker") // 1-5
+  coworkerRatingOfYou    Int?      @map("coworker_rating_of_you") // 1-5
+  privateNotes            String?   @map("private_notes")
+  archived                Boolean   @default(false)
+  lastWorkedTogether      DateTime? @map("last_worked_together")
+  createdAt               DateTime  @default(now()) @map("created_at")
+  updatedAt               DateTime  @updatedAt @map("updated_at")
+
+  user     User @relation("UserTeamRelationships", fields: [userId], references: [id], onDelete: Cascade)
+  coworker User @relation("CoworkerRelationships", fields: [coworkerId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, coworkerId])
+  @@map("team_relationships")
+  @@index([userId])
+  @@index([coworkerId])
+}
+
+// =============================================================================
+// GIGS
+// =============================================================================
+
+model Gig {
+  id              String    @id @default(uuid())
+  employerId      String    @map("employer_id")
+  gigCategory     String    @map("gig_category")
+  title           String
+  description     String
+  addressStreet   String    @map("address_street")
+  addressLat      Decimal   @db.Decimal(10, 7) @map("address_lat")
+  addressLng      Decimal   @db.Decimal(10, 7) @map("address_lng")
+  showAddress     Boolean   @default(true) @map("show_address")
+  neighborhood    String?
+  scheduledStart  DateTime  @map("scheduled_start")
+  scheduledEnd    DateTime  @map("scheduled_end")
+  durationHours   Decimal   @map("duration_hours") @db.Decimal(5, 2)
+  payRate         Decimal   @map("pay_rate") @db.Decimal(7, 2)
+  payType         String    @map("pay_type") // "hourly", "flat", "per_task"
+  maxPay          Decimal?  @map("max_pay") @db.Decimal(7, 2)
+
+  requiredSkills     String[] @default([]) @map("required_skills")
+  requiredEquipment   String[] @default([]) @map("required_equipment")
+  requiredTransport   String[] @default([]) @map("required_transport")
+  requiredExperience  String[] @default([]) @map("required_experience")
+  teamSize            Int      @default(1) @map("team_size")
+
+  // AI-assigned
+  riskCategory    String    @map("risk_category") // "low", "medium", "high"
+  riskFactors     Json      @default("[]") @map("risk_factors")
+  aiPricingContext Json?    @map("ai_pricing_context")
+
+  status              GigStatus @default(draft)
+  applicationDeadline DateTime?  @map("application_deadline")
+
+  viewCount       Int      @default(0) @map("view_count")
+  applicationCount Int     @default(0) @map("application_count")
+
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  publishedAt     DateTime? @map("published_at")
+
+  employer    User             @relation("EmployerGigs", fields: [employerId], references: [id])
+  category    SkillTaxonomy    @relation(fields: [gigCategory], references: [id])
+  photos      GigPhoto[]
+  bookmarks   GigBookmark[]
+  applications Application[]
+  agreement   Agreement?
+  reviews     Review[]
+
+  @@map("gigs")
+  @@index([employerId])
+  @@index([gigCategory])
+  @@index([status])
+  @@index([scheduledStart])
+  @@index([createdAt])
+}
+
+// =============================================================================
+// GIG PHOTOS
+// =============================================================================
+
+model GigPhoto {
+  id        String   @id @default(uuid())
+  gigId     String   @map("gig_id")
+  photoUrl  String   @map("photo_url")
+  caption   String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  gig Gig @relation(fields: [gigId], references: [id], onDelete: Cascade)
+
+  @@map("gig_photos")
+  @@index([gigId])
+}
+
+// =============================================================================
+// GIG BOOKMARKS
+// =============================================================================
+
+model GigBookmark {
+  id        String   @id @default(uuid())
+  gigId     String   @map("gig_id")
+  workerId  String   @map("worker_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  gig    Gig    @relation(fields: [gigId], references: [id], onDelete: Cascade)
+  worker User   @relation(fields: [workerId], references: [id])
+
+  @@unique([gigId, workerId])
+  @@map("gig_bookmarks")
+  @@index([workerId])
+}
+
+// =============================================================================
+// APPLICATIONS
+// =============================================================================
+
+model Application {
+  id                    String            @id @default(uuid())
+  gigId                 String            @map("gig_id")
+  workerId              String            @map("worker_id")
+  message               String?
+  proposedHourlyRate    Decimal?          @map("proposed_hourly_rate") @db.Decimal(7, 2)
+  proposedPaymentMethod PaymentMethod?    @map("proposed_payment_method")
+  status                ApplicationStatus @default(pending)
+  aiMatchScore          Decimal?          @map("ai_match_score") @db.Decimal(5, 2)
+  aiMatchExplanation    Json?             @map("ai_match_explanation")
+  createdAt             DateTime          @default(now()) @map("created_at")
+  updatedAt             DateTime          @updatedAt @map("updated_at")
+  respondedAt           DateTime?         @map("responded_at")
+
+  gig    Gig    @relation(fields: [gigId], references: [id])
+  worker User   @relation(fields: [workerId], references: [id])
+
+  @@unique([gigId, workerId])
+  @@map("applications")
+  @@index([gigId])
+  @@index([workerId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+// =============================================================================
+// AGREEMENTS
+// =============================================================================
+
+model Agreement {
+  id                String           @id @default(uuid())
+  gigId             String           @unique @map("gig_id")
+  workerId          String           @map("worker_id")
+  employerId        String           @map("employer_id")
+  status            AgreementStatus  @default(pending)
+
+  // Payment
+  paymentMethodAgreed PaymentMethod @map("payment_method_agreed")
+  payRateAgreed      Decimal        @map("pay_rate_agreed") @db.Decimal(7, 2)
+
+  // Terms history
+  termsHistory     Json            @default("[]") @map("terms_history")
+
+  // Check-in/out
+  checkInAt         DateTime?       @map("check_in_at")
+  checkInLat        Decimal?        @map("check_in_lat") @db.Decimal(10, 7)
+  checkInLng        Decimal?        @map("check_in_lng") @db.Decimal(10, 7)
+  checkOutAt        DateTime?       @map("check_out_at")
+  checkOutLat       Decimal?        @map("check_out_lat") @db.Decimal(10, 7)
+  checkOutLng       Decimal?        @map("check_out_lng") @db.Decimal(10, 7)
+
+  // Completion
+  completionConfirmedWorker  Boolean   @default(false) @map("completion_confirmed_worker")
+  completionConfirmedEmployer Boolean   @default(false) @map("completion_confirmed_employer")
+  completedAt                DateTime? @map("completed_at")
+
+  // Payment
+  paymentStatus     PaymentStatus   @default(pending) @map("payment_status")
+  paymentReleasedAt DateTime?       @map("payment_released_at")
+
+  // Dispute
+  disputeId         String?         @map("dispute_id")
+
+  createdAt         DateTime       @default(now()) @map("created_at")
+  updatedAt         DateTime       @updatedAt @map("updated_at")
+
+  gig      Gig      @relation(fields: [gigId], references: [id])
+  worker   User     @relation("WorkerAgreements", fields: [workerId], references: [id])
+  employer User     @relation("EmployerAgreements", fields: [employerId], references: [id])
+  dispute  Dispute?
+  reviews  Review[]
+
+  @@map("agreements")
+  @@index([gigId])
+  @@index([workerId])
+  @@index([employerId])
+  @@index([status])
+  @@index([paymentStatus])
+}
+
+// =============================================================================
+// REVIEWS
+// =============================================================================
+
+model Review {
+  id               String     @id @default(uuid())
+  agreementId      String     @map("agreement_id")
+  reviewerId       String     @map("reviewer_id")
+  revieweeId       String     @map("reviewee_id")
+  reviewType       ReviewType @map("review_type")
+  gigId            String     @map("gig_id")
+  gigCategory      String     @map("gig_category")
+
+  // Ratings (JSON structure varies by reviewType)
+  ratings          Json
+
+  writtenFeedback  String?    @map("written_feedback")
+  wouldWorkAgain   Boolean?
+  publishedAt      DateTime?  @map("published_at")
+  createdAt        DateTime   @default(now()) @map("created_at")
+
+  agreement    Agreement    @relation(fields: [agreementId], references: [id])
+  reviewer     User          @relation("ReviewsGiven", fields: [reviewerId], references: [id])
+  reviewee     User          @relation("ReviewsReceived", fields: [revieweeId], references: [id])
+  gig          Gig           @relation(fields: [gigId], references: [id])
+  gigCategoryRef SkillTaxonomy @relation(fields: [gigCategory], references: [id])
+
+  @@unique([agreementId, reviewerId, reviewType])
+  @@map("reviews")
+  @@index([agreementId])
+  @@index([revieweeId])
+  @@index([gigCategory])
+}
+
+// =============================================================================
+// DISPUTES
+// =============================================================================
+
+model Dispute {
+  id              String       @id @default(uuid())
+  agreementId     String       @unique @map("agreement_id")
+  filedBy         String       @map("filed_by")
+  filedAt         DateTime     @default(now()) @map("filed_at")
+  reason          String
+  description     String
+
+  // AI analysis
+  aiEvidenceSummary  Json? @map("ai_evidence_summary")
+  aiRelevantFactors  Json? @map("ai_relevant_factors")
+
+  // Resolution
+  status          DisputeStatus @default(open)
+  resolution      String?
+  decidedBy       String?       @map("decided_by")
+  decidedAt       DateTime?     @map("decided_at")
+
+  // Appeal
+  appealStatus    AppealStatus @default(none)
+  appealDecision  String?      @map("appeal_decision")
+  appealDecidedBy String?      @map("appeal_decided_by")
+  appealDecidedAt DateTime?    @map("appeal_decided_at")
+
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  agreement    Agreement        @relation(fields: [agreementId], references: [id])
+  filer        User             @relation("DisputeFiler", fields: [filedBy], references: [id])
+  evidence     DisputeEvidence[]
+
+  @@map("disputes")
+  @@index([agreementId])
+  @@index([filedBy])
+  @@index([status])
+}
+
+// =============================================================================
+// DISPUTE EVIDENCE
+// =============================================================================
+
+model DisputeEvidence {
+  id              String       @id @default(uuid())
+  disputeId       String       @map("dispute_id")
+  submittedBy     String       @map("submitted_by")
+  evidenceType    EvidenceType @map("evidence_type")
+  content         String
+  caption         String?
+  aiRelevanceNote String?      @map("ai_relevance_note")
+  submittedAt     DateTime     @default(now()) @map("submitted_at")
+
+  dispute    Dispute @relation(fields: [disputeId], references: [id], onDelete: Cascade)
+  submitter  User    @relation(fields: [submittedBy], references: [id])
+
+  @@map("dispute_evidence")
+  @@index([disputeId])
+  @@index([submittedBy])
+}
+
+// =============================================================================
+// USER PAYMENT METHODS
+// =============================================================================
+
+model UserPaymentMethod {
+  id          String       @id @default(uuid())
+  userId      String       @map("user_id")
+  method      PaymentMethod
+  handle      String?
+  label       String?
+  isVerified  Boolean      @default(false) @map("is_verified")
+  isDefault   Boolean      @default(false) @map("is_default")
+  createdAt   DateTime     @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_payment_methods")
+  @@index([userId])
+}
+
+// =============================================================================
+// ADMIN ACTIONS
+// =============================================================================
+
+model AdminAction {
+  id          String   @id @default(uuid())
+  adminId     String   @map("admin_id")
+  actionType  String   @map("action_type")
+  targetUserId String? @map("target_user_id")
+  targetId    String?  @map("target_id")
+  payload     Json     @default("{}")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  admin User @relation("AdminActions", fields: [adminId], references: [id])
+
+  @@map("admin_actions")
+  @@index([adminId])
+  @@index([targetUserId])
+  @@index([actionType])
+  @@index([createdAt])
+}
